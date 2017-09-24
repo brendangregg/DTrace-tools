@@ -55,7 +55,6 @@ sched:::on-cpu
 	@max_ms = max(this->time);
 	@dist_ms = quantize(this->time);
 	ts[(int64_t)curthread] = 0;
-
 }
 
 profile:::tick-1sec,
