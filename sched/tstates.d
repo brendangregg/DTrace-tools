@@ -6,6 +6,26 @@
  * to support a thread state analysis methodology:
  * http://www.brendangregg.com/tsamethod.html
  *
+ * States are:
+ *
+ *	CPU	on-CPU
+ *	RUNQ	Waiting on a CPU run queue
+ *	SLP	Interruptible sleep
+ *	USL	Uninterruptible sleep (eg, disk I/O)
+ *	SUS	Suspended
+ *	SWP	Swapped
+ *	LCK	Lock
+ *	IWT	Iwait
+ *	YLD	Yield
+ *
+ * WARNING: This traces scheduler events, which may be very frequent on
+ * your system, and so this may add some noticable overhead. Test in a
+ * lab environment and quantify before use.
+ *
+ * If you see dynvardrops, it means the events were too frequent for
+ * DTrace to keep up, so it has dropped events as a safety valve. The output
+ * may not be reliable for that run. It can be tuned (see dynvarsize below).
+ *
  * Copyright (c) 2017 Brendan Gregg. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,9 +61,13 @@
 #define TDI_SWAPPED     0x0004  /* Stack not in mem.  Bad juju if run. */
 #define TDI_LOCK        0x0008  /* Stopped on a lock. */
 #define TDI_IWAIT       0x0010  /* Awaiting interrupt. */
+#define TDF_SINTR       0x00000008 /* Sleep is interruptible. */
 
 /* from td_state in sys/proc.h: */
 #define TDS_INHIBITED 1
+
+/* fake states for this program: */
+#define TDI_UNINTSLEEP 0x1000  /* uninterruptible sleep */
 
 dtrace:::BEGIN
 {
@@ -111,13 +135,15 @@ sched:::off-cpu
 	/*
 	 * Key using a associative array, since we want to trace enqueue, which
 	 * is not in thread context.
+	 * 
+	 * Since associative arrays are racey and cause dynvardrops, I'm trying
+	 * to avoid setting an extra one just for td_flags TDF_SINTR, so add
+	 * that value into tdi as TDI_UNINTSLEEP.
 	 */
-	tdi[(int64_t)curthread] = curthread->td_inhibitors;
+	tdi[(int64_t)curthread] = curthread->td_inhibitors == TDI_SLEEPING &&
+	    !(curthread->td_flags & TDF_SINTR) ?
+	    TDI_UNINTSLEEP : curthread->td_inhibitors;
 	sts[(int64_t)curthread] = timestamp;
-	/*
-	 * I currently don't use curthread->td_flags, but it could be added for
-	 * further thread states.
-	 */
 }
 
 /*
@@ -151,12 +177,13 @@ sched:::enqueue
  *         ((td)->td_inhibitors & TDI_IWAIT) != 0 ? "iwait" : "yielding")
  */
 
-sched:::enqueue /this->td && this->tdi == TDI_SLEEPING/	 { @slp[this->comm, this->pid] = sum(this->delta); }
-sched:::enqueue /this->td && this->tdi == TDI_SUSPENDED/ { @sus[this->comm, this->pid] = sum(this->delta); }
-sched:::enqueue /this->td && this->tdi == TDI_SWAPPED/	 { @swp[this->comm, this->pid] = sum(this->delta); }
-sched:::enqueue /this->td && this->tdi == TDI_LOCK/	 { @lck[this->comm, this->pid] = sum(this->delta); }
-sched:::enqueue /this->td && this->tdi == TDI_IWAIT/	 { @iwt[this->comm, this->pid] = sum(this->delta); }
-sched:::enqueue /this->td && this->tdi == 0/		 { @yld[this->comm, this->pid] = sum(this->delta); }
+sched:::enqueue /this->td && this->tdi == TDI_SLEEPING/	  { @slp[this->comm, this->pid] = sum(this->delta); }
+sched:::enqueue /this->td && this->tdi == TDI_UNINTSLEEP/ { @usl[this->comm, this->pid] = sum(this->delta); }
+sched:::enqueue /this->td && this->tdi == TDI_SUSPENDED/  { @sus[this->comm, this->pid] = sum(this->delta); }
+sched:::enqueue /this->td && this->tdi == TDI_SWAPPED/	  { @swp[this->comm, this->pid] = sum(this->delta); }
+sched:::enqueue /this->td && this->tdi == TDI_LOCK/	  { @lck[this->comm, this->pid] = sum(this->delta); }
+sched:::enqueue /this->td && this->tdi == TDI_IWAIT/	  { @iwt[this->comm, this->pid] = sum(this->delta); }
+sched:::enqueue /this->td && this->tdi == 0/		  { @yld[this->comm, this->pid] = sum(this->delta); }
 
 dtrace:::END
 {
@@ -166,6 +193,7 @@ dtrace:::END
 	normalize(@cpu, 1000000);
 	normalize(@runq, 1000000);
 	normalize(@slp, 1000000);
+	normalize(@usl, 1000000);
 	normalize(@sus, 1000000);
 	normalize(@swp, 1000000);
 	normalize(@lck, 1000000);
@@ -173,8 +201,9 @@ dtrace:::END
 	normalize(@yld, 1000000);
 
 	/* Output is 79 chars wide, on purpose. No more chars! */
-	printf("%-16s %-6s %6s %6s %6s %6s %6s %6s %6s %6s\n", "COMM", "PID",
-	    "CPU", "RUNQ", "SLP", "SUS", "SWP", "LCK", "IWT", "YLD");
-	printa("%-16s %-6d %@6d %@6d %@6d %@6d %@6d %@6d %@6d %@6d\n", @cpu,
-	    @runq, @slp, @sus, @swp, @lck, @iwt, @yld);
+	printf("%-16s %-6s %6s %5s %6s %6s %5s %5s %5s %5s %5s\n", "COMM",
+	    "PID", "CPU", "RUNQ", "SLP", "USL", "SUS", "SWP", "LCK", "IWT",
+	    "YLD");
+	printa("%-16s %-6d %@6d %@5d %@6d %@6d %@5d %@5d %@5d %@5d %@5d\n",
+	    @cpu, @runq, @slp, @usl, @sus, @swp, @lck, @iwt, @yld);
 }
