@@ -14,8 +14,8 @@
  *	USL	Uninterruptible sleep (eg, disk I/O)
  *	SUS	Suspended
  *	SWP	Swapped
- *	LCK	Lock
- *	IWT	Iwait
+ *	LCK	Waiting for a lock
+ *	IWT	Waiting for an interrupt
  *	YLD	Yield
  *
  * WARNING: This traces scheduler events, which may be very frequent on
@@ -187,7 +187,7 @@ sched:::enqueue /this->td && this->tdi == 0/		  { @yld[this->comm, this->pid] = 
 
 dtrace:::END
 {
-	printf("Time (ms) per state:\n");
+	printf("Time (ms) per state (read script for info):\n");
 
 	/* output in milliseconds */
 	normalize(@cpu, 1000000);
