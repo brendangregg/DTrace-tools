@@ -135,6 +135,8 @@ sched:::enqueue
 	this->comm = stringof(args[0]->td_name);
 	this->tdi = tdi[arg0];
 	this->delta = timestamp - sts[arg0];
+	sts[arg0] = 0;
+	tdi[arg0] = 0;
 }
 
 /*
@@ -155,14 +157,6 @@ sched:::enqueue /this->td && this->tdi == TDI_SWAPPED/	 { @swp[this->comm, this-
 sched:::enqueue /this->td && this->tdi == TDI_LOCK/	 { @lck[this->comm, this->pid] = sum(this->delta); }
 sched:::enqueue /this->td && this->tdi == TDI_IWAIT/	 { @iwt[this->comm, this->pid] = sum(this->delta); }
 sched:::enqueue /this->td && this->tdi == 0/		 { @yld[this->comm, this->pid] = sum(this->delta); }
-
-sched:::enqueue
-/this->td/
-{
-	tdi[this->td] = 0;
-	sts[this->td] = 0;
-	this->td = 0;
-}
 
 dtrace:::END
 {
